@@ -1,0 +1,477 @@
+{
+  "kind": "Template",
+  "apiVersion": "v1",
+  "metadata": {
+    "name": "wordpress-mysql-example",
+    "annotations": {
+      "description": "An example wordpress application with a MySQL database.  Note: the MySQL service created by this template uses non-persistent storage.  To setup persisted storage, change this template to use a persistent volume claim instead of emptydir.",
+      "tags": "instant-app,php,wordpress,mysql",
+      "iconClass": "icon-php"
+    }
+  },
+  "labels": {
+    "template": "wordpress-mysql-example"
+  },
+  "objects": [
+    {
+      "kind": "Service",
+      "apiVersion": "v1",
+      "metadata": {
+        "name": "${APP_NAME}",
+        "annotations": {
+          "description": "Exposes and load balances the application pods"
+        }
+      },
+      "spec": {
+        "ports": [
+          {
+            "name": "web",
+            "port": 8080,
+            "targetPort": 8080
+          }
+        ],
+        "selector": {
+          "name": "${APP_NAME}"
+        }
+      }
+    },
+    {
+      "kind": "Route",
+      "apiVersion": "v1",
+      "metadata": {
+        "name": "${APP_NAME}"
+      },
+      "spec": {
+        "host": "${APPLICATION_DOMAIN}",
+        "to": {
+          "kind": "Service",
+          "name": "${APP_NAME}"
+        }
+      }
+    },
+    {
+      "kind": "ImageStream",
+      "apiVersion": "v1",
+      "metadata": {
+        "name": "${APP_NAME}",
+        "annotations": {
+          "description": "Keeps track of changes in the application image"
+        }
+      }
+    },
+    {
+      "kind": "BuildConfig",
+      "apiVersion": "v1",
+      "metadata": {
+        "name": "${APP_NAME}",
+        "annotations": {
+          "description": "Defines how to build the application"
+        }
+      },
+      "spec": {
+        "source": {
+          "type": "Git",
+          "git": {
+            "uri": "${SOURCE_REPOSITORY_URL}",
+            "ref": "${SOURCE_REPOSITORY_REF}"
+          },
+          "contextDir": "${CONTEXT_DIR}"
+        },
+        "strategy": {
+          "type": "Source",
+          "sourceStrategy": {
+            "from": {
+              "kind": "ImageStreamTag",
+              "namespace": "${NAMESPACE}",
+              "name": "${PHP_VERSION}"
+            }
+          }
+        },
+        "output": {
+          "to": {
+            "kind": "ImageStreamTag",
+            "name": "${APP_NAME}:latest"
+          }
+        },
+        "triggers": [
+          {
+            "type": "ImageChange"
+          },
+          {
+            "type": "ConfigChange"
+          },
+          {
+            "type": "GitHub",
+            "github": {
+              "secret": "${GITHUB_WEBHOOK_SECRET}"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "PersistentVolumeClaim",
+      "apiVersion": "v1",
+      "metadata": {
+        "name": "${CLAIM_WP_NAME}"
+      },
+      "spec": {
+        "accessModes": [
+          "ReadWriteOnce",
+          "ReadWriteMany"
+        ],
+        "resources": {
+          "requests": {
+            "storage": "2Gi"
+          }
+        }
+      }
+    },
+    {
+      "kind": "DeploymentConfig",
+      "apiVersion": "v1",
+      "metadata": {
+        "name": "${APP_NAME}",
+        "annotations": {
+          "description": "Defines how to deploy the application server"
+        }
+      },
+      "spec": {
+        "strategy": {
+          "type": "Rolling"
+        },
+        "triggers": [
+          {
+            "type": "ImageChange",
+            "imageChangeParams": {
+              "automatic": true,
+              "containerNames": [
+                "${APP_NAME}"
+              ],
+              "from": {
+                "kind": "ImageStreamTag",
+                "name": "${APP_NAME}:latest"
+              }
+            }
+          },
+          {
+            "type": "ConfigChange"
+          }
+        ],
+        "replicas": 1,
+        "selector": {
+          "name": "${APP_NAME}"
+        },
+        "template": {
+          "metadata": {
+            "name": "${APP_NAME}",
+            "labels": {
+              "name": "${APP_NAME}"
+            }
+          },
+          "spec": {
+            "volumes": [
+              {
+                "name": "${APP_NAME}-data",
+                "persistentVolumeClaim": {
+                  "claimName": "${CLAIM_WP_NAME}"
+                }
+              }
+            ],
+            "containers": [
+              {
+                "name": "${APP_NAME}",
+                "image": "${APP_NAME}",
+                "ports": [
+                  {
+                    "containerPort": 8080,
+                    "name": "wp-server"
+                  }
+                ],
+                "volumeMounts": [
+                  {
+                    "name": "${APP_NAME}-data",
+                    "mountPath": "${WP_PATH}"
+                  }
+                ],
+                "env": [
+                  {
+                    "name": "DATABASE_SERVICE_NAME",
+                    "value": "${DATABASE_SERVICE_NAME}"
+                  },
+                  {
+                    "name": "DATABASE_ENGINE",
+                    "value": "${DATABASE_ENGINE}"
+                  },
+                  {
+                    "name": "DATABASE_NAME",
+                    "value": "${DATABASE_NAME}"
+                  },
+                  {
+                    "name": "DATABASE_USER",
+                    "value": "${DATABASE_USER}"
+                  },
+                  {
+                    "name": "DATABASE_PASSWORD",
+                    "value": "${DATABASE_PASSWORD}"
+                  }
+                ],
+                "resources": {
+                  "limits": {
+                    "memory": "${WP_MEMORY_LIMIT}",
+                    "cpu": "${WP_CPU_LIMIT}"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "kind": "Service",
+      "apiVersion": "v1",
+      "metadata": {
+        "name": "${DATABASE_SERVICE_NAME}",
+        "annotations": {
+          "description": "Exposes the database server"
+        }
+      },
+      "spec": {
+        "ports": [
+          {
+            "name": "mysql",
+            "port": 3306,
+            "targetPort": 3306
+          }
+        ],
+        "selector": {
+          "name": "${DATABASE_SERVICE_NAME}"
+        }
+      }
+    },
+    {
+      "kind": "DeploymentConfig",
+      "apiVersion": "v1",
+      "metadata": {
+        "name": "${DATABASE_SERVICE_NAME}",
+        "annotations": {
+          "description": "Defines how to deploy the database"
+        }
+      },
+      "spec": {
+        "strategy": {
+          "type": "Recreate"
+        },
+        "triggers": [
+          {
+            "type": "ImageChange",
+            "imageChangeParams": {
+              "automatic": true,
+              "containerNames": [
+                "${DATABASE_SERVICE_NAME}"
+              ],
+              "from": {
+                "kind": "ImageStreamTag",
+                "namespace": "${NAMESPACE}",
+                "name": "${MYSQL_VERSION}"
+              }
+            }
+          },
+          {
+            "type": "ConfigChange"
+          }
+        ],
+        "replicas": 1,
+        "selector": {
+          "name": "${DATABASE_SERVICE_NAME}"
+        },
+        "template": {
+          "metadata": {
+            "name": "${DATABASE_SERVICE_NAME}",
+            "labels": {
+              "name": "${DATABASE_SERVICE_NAME}"
+            }
+          },
+          "spec": {
+            "volumes": [
+              {
+                "name": "${DATABASE_SERVICE_NAME}-data",
+                "persistentVolumeClaim": {
+                  "claimName": "${CLAIM_MYSQL_NAME}"
+                }
+              }
+            ],
+            "containers": [
+              {
+                "name": "${DATABASE_SERVICE_NAME}",
+                "image": "${DATABASE_SERVICE_NAME}",
+                "ports": [
+                  {
+                    "containerPort": 3306,
+                    "name": "mysql-server"
+                  }
+                ],
+                "volumeMounts": [
+                  {
+                    "name": "${DATABASE_SERVICE_NAME}-data",
+                    "mountPath": "${MYSQL_PATH}"
+                  }
+                ],
+                "readinessProbe": {
+                  "timeoutSeconds": 1,
+                  "initialDelaySeconds": 5,
+                  "exec": {
+                    "command": [ "/bin/sh", "-i", "-c", "MYSQL_PWD='${DATABASE_PASSWORD}' mysql -h 127.0.0.1 -u ${DATABASE_USER} -D ${DATABASE_NAME} -e 'SELECT 1'" ]
+                  }
+                },
+                "livenessProbe": {
+                  "timeoutSeconds": 1,
+                  "initialDelaySeconds": 30,
+                  "tcpSocket": {
+                    "port": 3306
+                  }
+                },
+                "env": [
+                  {
+                    "name": "MYSQL_USER",
+                    "value": "${DATABASE_USER}"
+                  },
+                  {
+                    "name": "MYSQL_PASSWORD",
+                    "value": "${DATABASE_PASSWORD}"
+                  },
+                  {
+                    "name": "MYSQL_DATABASE",
+                    "value": "${DATABASE_NAME}"
+                  }
+                ],
+                "resources": {
+                  "limits": {
+                    "memory": "${MYSQL_MEMORY_LIMIT}",
+                    "cpu": "${MYSQL_CPU_LIMIT}"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "parameters": [
+    {
+      "name": "APP_NAME",
+      "displayName": "Application Name",
+      "description": "The name assigned to all of the frontend objects defined in this template.",
+      "value": "wordpress-mysql-example"
+    },
+    {
+      "name": "NAMESPACE",
+      "displayName": "Namespace",
+      "description": "The OpenShift Namespace where the ImageStream resides.",
+      "value": "openshift"
+    },
+    {
+      "name": "SOURCE_REPOSITORY_URL",
+      "description": "The URL of the repository with your application source code",
+      "value": "https://github.com/wordpress/wordpress.git"
+    },
+    {
+      "name": "SOURCE_REPOSITORY_REF",
+      "description": "Set this to a branch name, tag or other ref of your repository if you are not using the default branch"
+    },
+    {
+      "name": "CONTEXT_DIR",
+      "description": "Set this to the relative path to your project if it is not in the root of your repository"
+    },
+    {
+      "name": "APPLICATION_DOMAIN",
+      "description": "The exposed hostname that will route to the wordpress service, if left blank a value will be defaulted.",
+      "value": ""
+    },
+    {
+      "name": "PHP_VERSION",
+      "description": "The php version that will be used to the wordpress application.",
+      "value": "php:5.6"
+    },
+    {
+      "name": "MYSQL_VERSION",
+      "description": "The mysql version that will be used to the wordpress application.",
+      "value": "mysql:5.6"
+    },
+    {
+      "name": "CLAIM_WP_NAME",
+      "description": "The claim name that will be used to the persistent volume claim.",
+      "value": "claim-wp"
+    },
+    {
+      "name": "CLAIM_MYSQL_NAME",
+      "description": "The claim name that will be used to the persistent volume claim.",
+      "value": "claim-mysql"
+    },
+    {
+      "name": "WP_PATH",
+      "description": "The wordpress path that will be used to the wordpress",
+      "value": "/opt/app-root/src"
+    },
+    {
+      "name": "MYSQL_PATH",
+      "description": "The mysql path that will be used to the mysql",
+      "value": "/var/lib/mysql/data"
+    },
+    {
+      "name": "GITHUB_WEBHOOK_SECRET",
+      "description": "A secret string used to configure the GitHub webhook",
+      "generate": "expression",
+      "from": "[a-zA-Z0-9]{40}"
+    },
+    {
+      "name": "DATABASE_SERVICE_NAME",
+      "description": "Database service name",
+      "value": "mysql"
+    },
+    {
+      "name": "DATABASE_NAME",
+      "description": "Database name",
+      "value": "wordpress"
+    },
+    {
+      "name": "DATABASE_USER",
+      "description": "Database user name",
+      "value": "wordpress"
+    },
+    {
+      "name": "DATABASE_PASSWORD",
+      "description": "Database user password",
+      "generate": "expression",
+      "from": "[a-zA-Z0-9]{16}"
+    },
+    {
+      "name": "DATABASE_ENGINE",
+      "displayName": "Database Engine",
+      "description": "Database engine: postgresql, mysql or sqlite (default).",
+      "value": "mysql"
+    },
+    {
+      "name": "WP_MEMORY_LIMIT",
+      "description": "Maximum amount of memory the container can use.",
+      "value": "250Mi"
+    },
+    {
+      "name": "MYSQL_MEMORY_LIMIT",
+      "description": "Maximum amount of memory the container can use.",
+      "value": "250Mi"
+    },
+    {
+      "name": "WP_CPU_LIMIT",
+      "description": "Maximum amount of cpu the container can use.",
+      "value": "400m"
+    },
+    {
+      "name": "MYSQL_CPU_LIMIT",
+      "description": "Maximum amount of cpu the container can use.",
+      "value": "400m"
+    }
+  ]
+}
